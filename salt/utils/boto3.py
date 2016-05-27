@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-Boto Common Utils
+Boto3 Common Utils
 =================
 
 Note: This module depends on the dicts packed by the loader and,
@@ -12,14 +12,14 @@ provides backwards compatibility.
 
 This module provides common functionality for the boto execution modules.
 The expected usage is to call `apply_funcs` from the `__virtual__` function
-of the module. This will bring properly initialized partials of  `_get_conn`
+of the module. This will bring properly initilized partials of  `_get_conn`
 and `_cache_id` into the module's namespace.
 
 Example Usage:
 
     .. code-block:: python
 
-        import salt.utils.boto
+        import salt.utils.boto3
 
         def __virtual__():
             # only required in 2015.2
@@ -41,21 +41,23 @@ import logging
 import sys
 from distutils.version import LooseVersion as _LooseVersion  # pylint: disable=import-error,no-name-in-module
 from functools import partial
-from salt.loader import minion_mods
 
 # Import salt libs
-from salt.ext.six import string_types  # pylint: disable=import-error
 from salt.ext.six.moves import range  # pylint: disable=import-error,redefined-builtin
 from salt.exceptions import SaltInvocationError
+from salt.ext import six
 
 # Import third party libs
 # pylint: disable=import-error
 try:
     # pylint: disable=import-error
     import boto
+    import boto3
     import boto.exception
+    import boto3.session
+
     # pylint: enable=import-error
-    logging.getLogger('boto').setLevel(logging.CRITICAL)
+    logging.getLogger('boto3').setLevel(logging.CRITICAL)
     HAS_BOTO = True
 except ImportError:
     HAS_BOTO = False
@@ -63,8 +65,6 @@ except ImportError:
 
 
 log = logging.getLogger(__name__)
-
-__salt__ = None
 
 
 def __virtual__():
@@ -74,35 +74,51 @@ def __virtual__():
     '''
     # TODO: Determine minimal version we want to support. VPC requires > 2.8.0.
     required_boto_version = '2.0.0'
+    required_boto3_version = '1.2.1'
     if not HAS_BOTO:
         return False
     elif _LooseVersion(boto.__version__) < _LooseVersion(required_boto_version):
         return False
+    elif _LooseVersion(boto3.__version__) < _LooseVersion(required_boto3_version):
+        return False
     else:
-        global __salt__
-        if not __salt__:
-            __salt__ = minion_mods(__opts__)
         return True
+
+
+def _option(value):
+    '''
+    Look up the value for an option.
+    '''
+    if value in __opts__:
+        return __opts__[value]
+    master_opts = __pillar__.get('master', {})
+    if value in master_opts:
+        return master_opts[value]
+    if value in __pillar__:
+        return __pillar__[value]
 
 
 def _get_profile(service, region, key, keyid, profile):
     if profile:
-        if isinstance(profile, string_types):
-            _profile = __salt__['config.option'](profile)
+        if isinstance(profile, six.string_types):
+            _profile = _option(profile)
         elif isinstance(profile, dict):
             _profile = profile
         key = _profile.get('key', None)
         keyid = _profile.get('keyid', None)
-        region = _profile.get('region', region or None)
-    if not region and __salt__['config.option'](service + '.region'):
-        region = __salt__['config.option'](service + '.region')
+        region = _profile.get('region', None)
+
+    if not region and _option(service + '.region'):
+        region = _option(service + '.region')
 
     if not region:
         region = 'us-east-1'
-    if not key and __salt__['config.option'](service + '.key'):
-        key = __salt__['config.option'](service + '.key')
-    if not keyid and __salt__['config.option'](service + '.keyid'):
-        keyid = __salt__['config.option'](service + '.keyid')
+        log.info('Assuming default region {0}'.format(region))
+
+    if not key and _option(service + '.key'):
+        key = _option(service + '.key')
+    if not keyid and _option(service + '.keyid'):
+        keyid = _option(service + '.keyid')
 
     label = 'boto_{0}:'.format(service)
     if keyid:
@@ -176,18 +192,21 @@ def get_connection(service, module=None, region=None, key=None, keyid=None,
 
     module = module or service
 
-    svc_mod = __import__('boto.' + module, fromlist=[module])
-
     cxkey, region, key, keyid = _get_profile(service, region, key,
                                              keyid, profile)
-    cxkey = cxkey + ':conn'
+    cxkey = cxkey + ':conn3'
 
     if cxkey in __context__:
         return __context__[cxkey]
 
     try:
-        conn = svc_mod.connect_to_region(region, aws_access_key_id=keyid,
-                                         aws_secret_access_key=key)
+        session = boto3.session.Session(aws_access_key_id=keyid,
+                          aws_secret_access_key=key,
+                          region_name=region)
+        if session is None:
+            raise SaltInvocationError('Region "{0}" is not '
+                                      'valid.'.format(region))
+        conn = session.client(module)
         if conn is None:
             raise SaltInvocationError('Region "{0}" is not '
                                       'valid.'.format(region))
@@ -209,6 +228,15 @@ def get_connection_func(service, module=None):
         conn = get_conn()
     '''
     return partial(get_connection, service, module=module)
+
+
+def get_region(service, region, profile):
+    """
+    Retrieve the region for a particular AWS service based on configured region and/or profile.
+    """
+    _, region, _, _ = _get_profile(service, region, None, None, profile)
+
+    return region
 
 
 def get_error(e):
@@ -251,7 +279,9 @@ def exactly_one(l):
     return exactly_n(l)
 
 
-def assign_funcs(modname, service, module=None, pack=None):
+def assign_funcs(modname, service, module=None,
+                get_conn_funcname='_get_conn', cache_id_funcname='_cache_id',
+                exactly_one_funcname='_exactly_one'):
     '''
     Assign _get_conn and _cache_id functions to the named module.
 
@@ -259,24 +289,22 @@ def assign_funcs(modname, service, module=None, pack=None):
 
         _utils__['boto.assign_partials'](__name__, 'ec2')
     '''
-    if pack:
-        global __salt__  # pylint: disable=W0601
-        __salt__ = pack
     mod = sys.modules[modname]
-    setattr(mod, '_get_conn', get_connection_func(service, module=module))
-    setattr(mod, '_cache_id', cache_id_func(service))
+    setattr(mod, get_conn_funcname, get_connection_func(service, module=module))
+    setattr(mod, cache_id_funcname, cache_id_func(service))
 
     # TODO: Remove this and import salt.utils.exactly_one into boto_* modules instead
     # Leaving this way for now so boto modules can be back ported
-    setattr(mod, '_exactly_one', exactly_one)
+    if exactly_one_funcname is not None:
+        setattr(mod, exactly_one_funcname, exactly_one)
 
 
 def paged_call(function, *args, **kwargs):
-    """Retrieve full set of values from a boto API call that may truncate
+    """Retrieve full set of values from a boto3 API call that may truncate
     its results, yielding each page as it is obtained.
     """
-    marker_flag = kwargs.pop('marker_flag', 'marker')
-    marker_arg = kwargs.pop('marker_flag', 'marker')
+    marker_flag = kwargs.pop('marker_flag', 'NextMarker')
+    marker_arg = kwargs.pop('marker_arg', 'Marker')
     while True:
         ret = function(*args, **kwargs)
         marker = ret.get(marker_flag)
@@ -284,3 +312,29 @@ def paged_call(function, *args, **kwargs):
         if not marker:
             break
         kwargs[marker_arg] = marker
+
+
+def get_role_arn(name, region=None, key=None, keyid=None, profile=None):
+    if name.startswith('arn:aws:iam:'):
+        return name
+
+    account_id = __salt__['boto_iam.get_account_id'](
+        region=region, key=key, keyid=keyid, profile=profile
+    )
+    return 'arn:aws:iam::{0}:role/{1}'.format(account_id, name)
+
+
+def _ordered(obj):
+    if isinstance(obj, (list, tuple)):
+        return sorted(_ordered(x) for x in obj)
+    elif isinstance(obj, dict):
+        return dict((six.text_type(k) if isinstance(k, six.string_types) else k, _ordered(v)) for k, v in obj.items())
+    elif isinstance(obj, six.string_types):
+        return six.text_type(obj)
+    return obj
+
+
+def json_objs_equal(left, right):
+    """ Compare two parsed JSON objects, given non-ordering in JSON objects
+    """
+    return _ordered(left) == _ordered(right)
