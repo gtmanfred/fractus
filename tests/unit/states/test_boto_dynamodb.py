@@ -5,111 +5,101 @@
 # Import Python libs
 from __future__ import absolute_import, print_function, unicode_literals
 
-# Import Salt Testing Libs
-from tests.support.mixins import LoaderModuleMockMixin
-from tests.support.unit import skipIf, TestCase
-from tests.support.mock import (
-    NO_MOCK,
-    NO_MOCK_REASON,
-    MagicMock,
-    patch)
+# Import Fractus Libs
+import fractus.cloudstates.boto_dynamodb as boto_dynamodb
 
-# Import Salt Libs
-import salt.states.boto_dynamodb as boto_dynamodb
+# Import Testing Libs
+import pytest
+from mock import MagicMock, patch
 
 
-@skipIf(NO_MOCK, NO_MOCK_REASON)
-class BotoDynamodbTestCase(TestCase, LoaderModuleMockMixin):
+def setup_module():
+    pytest.helpers.setup_loader({boto_dynamodb: {}})
+
+# 'present' function tests: 1
+
+def test_present():
     '''
-    Test cases for salt.states.boto_dynamodb
+    Test to ensure the DynamoDB table exists.
     '''
-    def setup_loader_modules(self):
-        return {boto_dynamodb: {}}
+    name = 'new_table'
 
-    # 'present' function tests: 1
+    ret = {'name': name,
+           'result': True,
+           'changes': {},
+           'comment': ''}
 
-    def test_present(self):
-        '''
-        Test to ensure the DynamoDB table exists.
-        '''
-        name = 'new_table'
+    exists_mock = MagicMock(side_effect=[True, False, False])
+    dict_mock = MagicMock(return_value={})
+    mock_bool = MagicMock(return_value=True)
+    pillar_mock = MagicMock(return_value=[])
+    with patch.dict(boto_dynamodb.__salt__,
+                    {'boto_dynamodb.exists': exists_mock,
+                     'boto_dynamodb.describe': dict_mock,
+                     'config.get': dict_mock,
+                     'pillar.get': pillar_mock,
+                     'boto_dynamodb.create_table': mock_bool}):
+        comt = ('DynamoDB table {0} exists,\n'
+                'DynamoDB table {0} throughput matches,\n'
+                'All global secondary indexes match,\n'.format(name))
+        ret.update({'comment': comt})
+        assert boto_dynamodb.present(name) == ret
 
-        ret = {'name': name,
-               'result': True,
-               'changes': {},
-               'comment': ''}
+        with patch.dict(boto_dynamodb.__opts__, {'test': True}):
+            comt = ('DynamoDB table {0} would be created.'.format(name))
+            ret.update({'comment': comt, 'result': None})
+            assert boto_dynamodb.present(name) == ret
 
-        exists_mock = MagicMock(side_effect=[True, False, False])
-        dict_mock = MagicMock(return_value={})
-        mock_bool = MagicMock(return_value=True)
-        pillar_mock = MagicMock(return_value=[])
-        with patch.dict(boto_dynamodb.__salt__,
-                        {'boto_dynamodb.exists': exists_mock,
-                         'boto_dynamodb.describe': dict_mock,
-                         'config.option': dict_mock,
-                         'pillar.get': pillar_mock,
-                         'boto_dynamodb.create_table': mock_bool}):
-            comt = ('DynamoDB table {0} exists,\n'
-                    'DynamoDB table {0} throughput matches,\n'
-                    'All global secondary indexes match,\n'.format(name))
-            ret.update({'comment': comt})
-            self.assertDictEqual(boto_dynamodb.present(name), ret)
+        changes = {'new': {'global_indexes': None,
+                           'hash_key': None,
+                           'hash_key_data_type': None,
+                           'local_indexes': None,
+                           'range_key': None,
+                           'range_key_data_type': None,
+                           'read_capacity_units': None,
+                           'table': 'new_table',
+                           'write_capacity_units': None}}
 
-            with patch.dict(boto_dynamodb.__opts__, {'test': True}):
-                comt = ('DynamoDB table {0} would be created.'.format(name))
-                ret.update({'comment': comt, 'result': None})
-                self.assertDictEqual(boto_dynamodb.present(name), ret)
+        with patch.dict(boto_dynamodb.__opts__, {'test': False}):
+            comt = ('DynamoDB table {0} was successfully created,\n'
+                    'DynamoDB table new_table throughput matches,\n'
+                    .format(name))
+            ret.update({'comment': comt, 'result': True,
+                        'changes': changes})
+            assert ret == boto_dynamodb.present(name)
 
-            changes = {'new': {'global_indexes': None,
-                               'hash_key': None,
-                               'hash_key_data_type': None,
-                               'local_indexes': None,
-                               'range_key': None,
-                               'range_key_data_type': None,
-                               'read_capacity_units': None,
-                               'table': 'new_table',
-                               'write_capacity_units': None}}
+# 'absent' function tests: 1
 
-            with patch.dict(boto_dynamodb.__opts__, {'test': False}):
-                comt = ('DynamoDB table {0} was successfully created,\n'
-                        'DynamoDB table new_table throughput matches,\n'
-                        .format(name))
-                ret.update({'comment': comt, 'result': True,
-                            'changes': changes})
-                self.assertDictEqual(ret, boto_dynamodb.present(name))
+def test_absent():
+    '''
+    Test to ensure the DynamoDB table does not exist.
+    '''
+    name = 'new_table'
 
-    # 'absent' function tests: 1
+    ret = {'name': name,
+           'result': True,
+           'changes': {},
+           'comment': ''}
 
-    def test_absent(self):
-        '''
-        Test to ensure the DynamoDB table does not exist.
-        '''
-        name = 'new_table'
+    mock = MagicMock(side_effect=[False, True, True])
+    mock_bool = MagicMock(return_value=True)
+    with patch.dict(boto_dynamodb.__salt__,
+                    {'boto_dynamodb.exists': mock,
+                     'boto_dynamodb.delete': mock_bool}):
+        comt = ('DynamoDB table {0} does not exist'.format(name))
+        ret.update({'comment': comt})
+        assert boto_dynamodb.absent(name) == ret
 
-        ret = {'name': name,
-               'result': True,
-               'changes': {},
-               'comment': ''}
+        with patch.dict(boto_dynamodb.__opts__, {'test': True}):
+            comt = 'DynamoDB table {0} is set to be deleted'.format(name)
+            ret.update({'comment': comt, 'result': None})
+            assert boto_dynamodb.absent(name) == ret
 
-        mock = MagicMock(side_effect=[False, True, True])
-        mock_bool = MagicMock(return_value=True)
-        with patch.dict(boto_dynamodb.__salt__,
-                        {'boto_dynamodb.exists': mock,
-                         'boto_dynamodb.delete': mock_bool}):
-            comt = ('DynamoDB table {0} does not exist'.format(name))
-            ret.update({'comment': comt})
-            self.assertDictEqual(boto_dynamodb.absent(name), ret)
+        changes = {'new': 'Table new_table deleted',
+                   'old': 'Table new_table exists'}
 
-            with patch.dict(boto_dynamodb.__opts__, {'test': True}):
-                comt = 'DynamoDB table {0} is set to be deleted'.format(name)
-                ret.update({'comment': comt, 'result': None})
-                self.assertDictEqual(boto_dynamodb.absent(name), ret)
-
-            changes = {'new': 'Table new_table deleted',
-                       'old': 'Table new_table exists'}
-
-            with patch.dict(boto_dynamodb.__opts__, {'test': False}):
-                comt = ('Deleted DynamoDB table {0}'.format(name))
-                ret.update({'comment': comt, 'result': True,
-                            'changes': changes})
-                self.assertDictEqual(boto_dynamodb.absent(name), ret)
+        with patch.dict(boto_dynamodb.__opts__, {'test': False}):
+            comt = ('Deleted DynamoDB table {0}'.format(name))
+            ret.update({'comment': comt, 'result': True,
+                        'changes': changes})
+            assert boto_dynamodb.absent(name) == ret

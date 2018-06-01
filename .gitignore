@@ -1,0 +1,10 @@
+# pycache stuff
+*.pyc
+__pycache__
+
+# setuptools stuff
+*.egg-info
+
+# test stuff
+/.pytest_cache/
+/.tox/

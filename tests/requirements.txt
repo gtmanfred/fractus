@@ -1,0 +1,11 @@
+-r ../requirements.txt
+
+boto
+boto3
+botocore
+flake8
+mock
+moto
+pytest
+pytest-helpers-namespace
+pytest-salt

@@ -5,77 +5,68 @@
 # Import Python libs
 from __future__ import absolute_import, print_function, unicode_literals
 
-# Import Salt Testing Libs
-from tests.support.mixins import LoaderModuleMockMixin
-from tests.support.unit import skipIf, TestCase
-from tests.support.mock import NO_MOCK, NO_MOCK_REASON, MagicMock, patch
+# Import Fractus Libs
+import fractus.cloudstates.boto_ec2 as boto_ec2
 
-# Import Salt Libs
-import salt.states.boto_ec2 as boto_ec2
+# Import Testing Libs
+import pytest
+from mock import MagicMock, patch
 
 
-@skipIf(NO_MOCK, NO_MOCK_REASON)
-class BotoEc2TestCase(TestCase, LoaderModuleMockMixin):
+def setup_module():
+    pytest.helpers.setup_loader({boto_ec2: {}})
+
+# 'key_present' function tests: 1
+
+def test_key_present():
     '''
-    Test cases for salt.states.boto_ec2
+    Test to ensure key pair is present.
     '''
-    def setup_loader_modules(self):
-        return {boto_ec2: {}}
+    name = 'mykeypair'
+    upublic = 'salt://mybase/public_key.pub'
 
-    # 'key_present' function tests: 1
+    ret = {'name': name,
+           'result': True,
+           'changes': {},
+           'comment': ''}
 
-    def test_key_present(self):
-        '''
-        Test to ensure key pair is present.
-        '''
-        name = 'mykeypair'
-        upublic = 'salt://mybase/public_key.pub'
+    mock = MagicMock(side_effect=[True, False, False])
+    mock_bool = MagicMock(side_effect=[IOError, True])
+    with patch.dict(boto_ec2.__salt__, {'boto_ec2.get_key': mock,
+                                        'cp.get_file_str': mock_bool}):
+        comt = ('The key name {0} already exists'.format(name))
+        ret.update({'comment': comt})
+        assert boto_ec2.key_present(name) == ret
 
-        ret = {'name': name,
-               'result': True,
-               'changes': {},
-               'comment': ''}
+        comt = ('File {0} not found.'.format(upublic))
+        ret.update({'comment': comt, 'result': False})
+        assert boto_ec2.key_present(name, upload_public=upublic) == ret
 
-        mock = MagicMock(side_effect=[True, False, False])
-        mock_bool = MagicMock(side_effect=[IOError, True])
-        with patch.dict(boto_ec2.__salt__, {'boto_ec2.get_key': mock,
-                                            'cp.get_file_str': mock_bool}):
-            comt = ('The key name {0} already exists'.format(name))
-            ret.update({'comment': comt})
-            self.assertDictEqual(boto_ec2.key_present(name), ret)
+        with patch.dict(boto_ec2.__opts__, {'test': True}):
+            comt = ('The key {0} is set to be created.'.format(name))
+            ret.update({'comment': comt, 'result': None})
+            assert boto_ec2.key_present(name, upload_public=upublic) == ret
 
-            comt = ('File {0} not found.'.format(upublic))
-            ret.update({'comment': comt, 'result': False})
-            self.assertDictEqual(boto_ec2.key_present(name,
-                                                      upload_public=upublic),
-                                 ret)
+# 'key_absent' function tests: 1
 
-            with patch.dict(boto_ec2.__opts__, {'test': True}):
-                comt = ('The key {0} is set to be created.'.format(name))
-                ret.update({'comment': comt, 'result': None})
-                self.assertDictEqual(boto_ec2.key_present
-                                     (name, upload_public=upublic), ret)
+def test_key_absent():
+    '''
+    Test to deletes a key pair
+    '''
+    name = 'new_table'
 
-    # 'key_absent' function tests: 1
+    ret = {'name': name,
+           'result': True,
+           'changes': {},
+           'comment': ''}
 
-    def test_key_absent(self):
-        '''
-        Test to deletes a key pair
-        '''
-        name = 'new_table'
+    mock = MagicMock(side_effect=[False, True])
+    with patch.dict(boto_ec2.__salt__, {'boto_ec2.get_key': mock}):
+        comt = ('The key name {0} does not exist'.format(name))
+        ret.update({'comment': comt})
+        assert boto_ec2.key_absent(name) == ret
 
-        ret = {'name': name,
-               'result': True,
-               'changes': {},
-               'comment': ''}
-
-        mock = MagicMock(side_effect=[False, True])
-        with patch.dict(boto_ec2.__salt__, {'boto_ec2.get_key': mock}):
-            comt = ('The key name {0} does not exist'.format(name))
-            ret.update({'comment': comt})
-            self.assertDictEqual(boto_ec2.key_absent(name), ret)
-
-            with patch.dict(boto_ec2.__opts__, {'test': True}):
-                comt = ('The key {0} is set to be deleted.'.format(name))
-                ret.update({'comment': comt, 'result': None})
-                self.assertDictEqual(boto_ec2.key_absent(name), ret)
+        with patch.dict(boto_ec2.__opts__, {'test': True}):
+            comt = ('The key {0} is set to be deleted.'.format(name))
+            ret.update({'comment': comt, 'result': None})
+            assert boto_ec2.key_absent(name) == ret

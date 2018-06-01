@@ -1,0 +1,3 @@
+salt>=2016.11.0
+xdg<2.0.0; python_version < '3.6'
+xdg; python_version >= '3.6'
