@@ -1,5 +1,6 @@
 Fractus
 =======
+[![Build Status](https://travis-ci.com/gtmanfred/fractus.svg?branch=develop)](https://travis-ci.com/gtmanfred/fractus)
 
 The goal of Fractus is to move cloud execution modules and states out of salt
 and into a new project so that they can be iterated on and released more
